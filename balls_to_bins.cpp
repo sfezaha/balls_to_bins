@@ -5,11 +5,7 @@
 #include <chrono>
 #include <fstream>
 #include <ctime>
-
-
-
-
-
+// #include "balls_to_bins.h"
 
 
 
@@ -21,8 +17,11 @@ class Bin{
         load = 0;
     }
 
-    void addBall(){
-        load +=1;
+    void addBall(bool dynamic_ld = true, int max_ld=100){
+        if (dynamic_ld){
+          max_ld = rand() % max_ld;
+        }
+        load +=max_ld;
     }
 };
 
@@ -38,8 +37,7 @@ protected:
     BaseBallsToBins(int numOfBalls, int numOfBins) {
         this->numOfBalls = numOfBalls;
         this->numOfBins = numOfBins;
-        this->bins = new Bin[numOfBins]; 
-
+        bins = new Bin[this->numOfBins];
     }
 
     void calculateMinLoad(){
@@ -71,16 +69,15 @@ protected:
 
     void analyze() {
         calculateGap(); 
-        std::cout << "+-------+--------+" << std::endl;
-        std::cout << "| Bin # | Load   |" << std::endl;
-        std::cout << "+-------+--------+" << std::endl;
-        maxLoad = bins[0].load;
-        int minLoad = bins[1].load;
-        for (int i = 0; i < numOfBins; ++i) {
-            std::cout << "| " << std::setw(5) << i+1 << " | " << std::setw(6) << bins[i].load << " |" << std::endl;
-        }
-        std::cout << "+-------+--------+" << std::endl;
-        std::cout << "Max Load: " << maxLoad << ", Min Load: " << minLoad << ", Max Gap: " << maxGap << std::endl;
+        // std::cout << "+-------+--------+" << std::endl;
+        // std::cout << "| Bin # | Load   |" << std::endl;
+        // std::cout << "+-------+--------+" << std::endl;
+        // for (int i = 0; i < numOfBins; ++i) {
+        //     std::cout << "| " << std::setw(5) << i+1 << " | " << std::setw(6) << bins[i].load << " |" << std::endl;
+        // }
+        // std::cout << "+-------+--------+" << std::endl;
+        std::cout << "Max Load: " << maxLoad << ", Min Load: " << minLoad << ", Max Gap: "
+         << maxGap << "  , Runtime:   " << runtime << std::endl;
 
     }
 
@@ -103,6 +100,7 @@ public:
     runtime = duration.count();
     analyze();
     std::cout << "runtime in us:     " << runtime << std::endl; 
+    
     }
 
 
@@ -142,6 +140,24 @@ public:
 };
 
 
+class RandomBin : public BaseBallsToBins {
+
+
+public:
+    RandomBin(int numOfBalls, int numOfBins) : BaseBallsToBins(numOfBalls, numOfBins) {}
+    void calc() {
+        int remainingBalls = numOfBalls;
+
+        while (remainingBalls > 0) {
+            int idx = rand() % numOfBins;
+            bins[idx].addBall();
+            remainingBalls -= 1;
+        }
+    }
+};
+
+
+
 class MinLoadAllocation : public BaseBallsToBins {
 
 public:
@@ -170,80 +186,118 @@ private:
         }
 
         return minLoadIndex;
-}
-
-
+    }
 
 };
 
-void saveVectorsToCSV(const std::vector<std::pair<std::string, std::vector<int>>>& vectors) {
-    // Prepare a CSV file for output
-    std::ofstream file("vectors.csv");
-    if (!file.is_open()) {
-        std::cerr << "Unable to open vectors.csv for writing." << std::endl;
-        return;
+
+class SimulationResults {
+public:
+    std::string filename;
+    std::vector<std::string> colNameVec;
+    std::vector<std::vector<int>> resVec;
+
+    SimulationResults(const std::string& baseDirectory, const std::string& baseFilename) {
+        auto now = std::chrono::system_clock::now();
+        auto now_c = std::chrono::system_clock::to_time_t(now);
+        std::ostringstream timeStamp;
+        timeStamp << std::put_time(std::localtime(&now_c), "%Y-%m-%d_%H-%M-%S");
+
+        filename = baseDirectory + baseFilename + "_" + ".csv";
     }
 
-    // Write CSV headers
-    file << "Index";
-    for (const auto& vector : vectors) {
-        file << "," << vector.first;
-    }
-    file << "\n";
 
-    // Write vector values to CSV
-    int numElements = vectors[0].second.size();
-    for (int i = 0; i < numElements; ++i) {
-        file << i + 1;
-        for (const auto& vector : vectors) {
-            file << "," << vector.second[i];
+void performAndStoreResults(const std::vector<int>& bins, int numOfBalls, std::string restParam = "max_gap") {
+    colNameVec = {"Number of Bins", "Power of 2 Choices", "Absolute minimum load", "Random allocation"};
+
+    for (int nBins : bins) {
+        PowerOfChoices pocSim(numOfBalls, nBins, 2);
+        pocSim.runSimulation();
+        MinLoadAllocation mlaSim(numOfBalls, nBins);
+        mlaSim.runSimulation();
+        RandomBin randSim(numOfBalls, nBins);
+        randSim.runSimulation();
+
+        int resultPoC, resultMLA, resultRand;
+
+        if (restParam == "max_load") {
+            resultPoC = pocSim.maxLoad;
+            resultMLA = mlaSim.maxLoad;
+            resultRand = randSim.maxLoad;
+        } else if (restParam == "runtime") {
+            resultPoC = pocSim.runtime;
+            resultMLA = mlaSim.runtime;
+            resultRand = randSim.runtime;
+        } else if (restParam == "max_gap") {
+            resultPoC = pocSim.maxGap;
+            resultMLA = mlaSim.maxGap;
+            resultRand = randSim.maxGap;
         }
-        file << "\n";
-    }
+         else {
+            throw std::invalid_argument("performAndStoreResults: wrong restParam");
+        }
 
-    file.close();
+        resVec.push_back({nBins, resultPoC, resultMLA, resultRand});
+    }
 }
+    
+    void saveToCSV() {
+        std::ofstream outFile(filename);
+
+        if (!outFile.is_open()) {
+            std::cerr << "Failed to open file: " << filename << std::endl;
+            return;
+        }
+
+        for (size_t i = 0; i < colNameVec.size(); ++i) {
+            outFile << colNameVec[i];
+            if (i < colNameVec.size() - 1) {
+                outFile << ",";
+            }
+        }
+        outFile << "\n";
+
+        for (const auto& row : resVec) {
+            for (size_t i = 0; i < row.size(); ++i) {
+                outFile << row[i];
+                if (i < row.size() - 1) {
+                    outFile << ",";
+                }
+            }
+            outFile << "\n";
+        }
+
+        outFile.close();
+    }
+};
+
 
 
 int main() {
-    // MinLoadAllocation child(10000, 32);
-    // child.runSimulation();
-    // PowerOfChoices child2(10000, 32, 2);
-    // srand(static_cast<unsigned int>(time(NULL)));
-    // child2.runSimulation(); 
-
-    srand(static_cast<unsigned int>(time(NULL)));
-
-    std::vector<int> balls{1000, 5000, 10000, 20000}; // Example numbers of balls
-    int numOfBins = 32;
-    int numOfChoices = 2;
-
-    // Prepare a CSV file for output
-    std::ofstream file("max_gaps.csv");
-    if (!file.is_open()) {
-        std::cerr << "Unable to open max_gaps.csv for writing." << std::endl;
-        return 1;
-    }
-
-    // Write CSV headers
-    file << "NumOfBalls,MinLoadAllocation,PowerOfChoices\n";
-
-    for (int nBalls : balls) {
-        MinLoadAllocation minLoadSimulation(nBalls, numOfBins);
-        minLoadSimulation.runSimulation();
-        int minLoadGap = minLoadSimulation.maxGap;
-
-        PowerOfChoices powerOfChoicesSimulation(nBalls, numOfBins, numOfChoices);
-        powerOfChoicesSimulation.runSimulation();
-        int powerOfChoicesGap = powerOfChoicesSimulation.maxGap;
-
-        // Write results to CSV
-        file << nBalls << "," << minLoadGap << "," << powerOfChoicesGap << "\n";
-    }
-
-    file.close();
-
+    std::vector<int> bins = {16, 32, 64, 128, 256, 512, 1024};
+    // std::vector<int> bins = {16, 32, 64, 128, 256, 512, 1024};
+    int numOfBalls = 10000;
+    std::string base_dir = "/home/asfez/personal/cpp_pojects/balls_to_bins/data/";
+    int numberOfSimulations = 50;
     
+    for (int i = 0; i < numberOfSimulations; i++) {
+        srand(static_cast<unsigned int>(time(NULL)) + i);
+
+        std::string mg_filename = "max_gaps/max_gaps_simulation_results" + std::to_string(i);
+        SimulationResults mg_simResults(base_dir, mg_filename);
+        mg_simResults.performAndStoreResults(bins, numOfBalls, "max_gap");
+        mg_simResults.saveToCSV();
+
+        std::string ml_filename = "max_loads/max_load_simulation_results" + std::to_string(i);
+        SimulationResults ml_simResults(base_dir, ml_filename);
+        ml_simResults.performAndStoreResults(bins, numOfBalls, "max_load");
+        ml_simResults.saveToCSV();
+
+        std::string rt_filename = "runtimes/runtime_simulation_results" + std::to_string(i);
+        SimulationResults rt_simResults(base_dir, rt_filename);
+        rt_simResults.performAndStoreResults(bins, numOfBalls, "runtime");
+        rt_simResults.saveToCSV();
+    }
 
     return 0;
 }
